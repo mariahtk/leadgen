@@ -9,6 +9,28 @@ from io import StringIO
 ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
 HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
+def test_attom_api():
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+    headers = {
+        "apikey": ATTOM_API_KEY
+    }
+    params = {
+        "address1": "142 W 57th Street",
+        "city": "New York",
+        "state": "NY",
+        "postalcode": "10019",
+        "page": 1,
+        "pagesize": 1
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+    print(f"Status Code: {response.status_code}")
+    print(f"Response Content:\n{response.text}")
+
+if __name__ == "__main__":
+    test_attom_api()
+
+
 def lookup_property_detail(address):
     url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
     headers = {"apikey": ATTOM_API_KEY}
