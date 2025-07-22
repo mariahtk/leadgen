@@ -8,11 +8,13 @@ ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
 HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
 @st.cache_data(show_spinner=False)
-def lookup_property(address, postalcode):
+def lookup_property(address, city, state, postalcode):
     url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
     headers = {"apikey": ATTOM_API_KEY}
     params = {
         "address1": address,
+        "city": city,
+        "state": state,
         "postalcode": postalcode,
         "page": 1,
         "pagesize": 1
@@ -84,16 +86,18 @@ def main():
     st.write("Search for a property and find nearby commercial properties + owner contact info.")
 
     with st.form("property_form"):
-        address = st.text_input("Full Street Address", "142 W 57th Street")
+        address = st.text_input("Street Address", "142 W 57th Street")
+        city = st.text_input("City", "New York")
+        state = st.text_input("State (2-letter code)", "NY")
         postalcode = st.text_input("ZIP Code", "10019")
         submitted = st.form_submit_button("Search")
 
     if submitted:
-        if not all([address, postalcode]):
+        if not all([address, city, state, postalcode]):
             st.warning("Please fill in all fields.")
             return
 
-        data = lookup_property(address, postalcode)
+        data = lookup_property(address, city, state, postalcode)
         if not data:
             st.error("No property found.")
             return
