@@ -1,72 +1,104 @@
 import streamlit as st
 import requests
 import folium
+from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
-import pandas as pd
 
 # === API KEYS ===
 ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
 HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
+# --- Helper Functions ---
+
+def get_property_info(address, city, state, zip_code):
+    url = f"https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+    headers = {
+        "apikey": ATTOM_API_KEY
+    }
+    params = {
+        "address1": address,
+        "address2": f"{city}, {state} {zip_code}"
+    }
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        st.error(f"ATTOM API Error: {response.status_code} - {response.text}")
+        return None
+    return response.json().get("property", [])[0]
+
+def get_nearby_cre(lat, lon):
+    url = f"https://api.gateway.attomdata.com/propertyapi/v1.0.0/area/geo/point"
+    headers = {"apikey": ATTOM_API_KEY}
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "radius": 1,
+        "propertytype": "COM"
+    }
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        st.error(f"ATTOM Nearby API Error: {response.status_code} - {response.text}")
+        return []
+    return response.json().get("property", [])[:5]
+
+def get_email_from_hunter(domain):
+    url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_API_KEY}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        return "N/A"
+    data = response.json()
+    emails = data.get("data", {}).get("emails", [])
+    return emails[0]["value"] if emails else "N/A"
+
+def extract_domain_from_owner(owner_name):
+    # Dummy domain parser (you could use Clearbit if allowed)
+    return owner_name.replace(" ", "").lower() + ".com"
 
 # --- Streamlit UI ---
-st.title("🏙️ Commercial Property Lead Generator")
-address = st.text_input("Enter Address (e.g., 123 Main St)")
-city = st.text_input("City")
-state = st.text_input("State (e.g., NY)")
-postalcode = st.text_input("ZIP Code")
 
-if st.button("🔍 Search Property"):
-    if not (address and city and state and postalcode):
-        st.warning("Please fill all fields.")
+st.title("🏢 Commercial Real Estate Finder")
+st.write("Search for a property and find nearby commercial properties + owner contact info.")
+
+with st.form("property_form"):
+    address = st.text_input("Street Address", "1600 Amphitheatre Parkway")
+    city = st.text_input("City", "Mountain View")
+    state = st.text_input("State", "CA")
+    zip_code = st.text_input("ZIP Code", "94043")
+    submitted = st.form_submit_button("Search")
+
+if submitted:
+    data = get_property_info(address, city, state, zip_code)
+    if not data:
+        st.error("No property found.")
     else:
-        with st.spinner("Fetching data from ATTOM..."):
-            attom_url = f"https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
-            headers = {"apikey": ATTOM_API_KEY}
-            params = {
-                "address1": address,
-                "city": city,
-                "state": state.upper(),
-                "postalcode": postalcode
-            }
+        lat = data["location"]["latitude"]
+        lon = data["location"]["longitude"]
+        owner_name = data.get("owner", {}).get("owner1", "Unknown Owner")
 
-            response = requests.get(attom_url, headers=headers, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                try:
-                    prop = data['property'][0]
-                    owner = prop.get("owner", {})
-                    location = prop.get("location", {})
-                    st.subheader("🏡 Property Details")
-                    st.write(f"**Owner Name:** {owner.get('owner1', 'N/A')}")
-                    st.write(f"**Mailing Address:** {owner.get('mailingaddr', 'N/A')}")
-                    st.write(f"**City, State, ZIP:** {owner.get('mailingcity', '')}, {owner.get('mailingstate', '')} {owner.get('mailingzip', '')}")
+        st.subheader("🔍 Property Information")
+        st.write(data)
 
-                    # Map
-                    lat, lon = location.get("latitude"), location.get("longitude")
-                    if lat and lon:
-                        m = folium.Map(location=[lat, lon], zoom_start=16)
-                        MarkerCluster().add_to(m)
-                        folium.Marker([lat, lon], tooltip="Property Location").add_to(m)
-                        st_folium(m, width=700)
+        st.subheader("📍 Map View with Nearby CRE")
+        m = folium.Map(location=[lat, lon], zoom_start=15)
+        MarkerCluster().add_to(m)
 
-                    # Hunter.io Lookup
-                    with st.spinner("Looking up owner email (Hunter.io)..."):
-                        domain = st.text_input("Company Domain (for Hunter.io email guess)")
-                        if domain:
-                            hunter_url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_API_KEY}"
-                            r = requests.get(hunter_url)
-                            if r.status_code == 200:
-                                emails = r.json().get("data", {}).get("emails", [])
-                                if emails:
-                                    st.subheader("📧 Found Emails")
-                                    for email in emails[:3]:
-                                        st.write(f"{email['value']} ({email['position']})")
-                                else:
-                                    st.info("No emails found.")
-                            else:
-                                st.error("Hunter API error.")
-                except Exception as e:
-                    st.error(f"Error parsing ATTOM response: {e}")
-            else:
-                st.error(f"ATTOM API Error {response.status_code}: {response.text}")
+        folium.Marker([lat, lon], tooltip="Your Property", icon=folium.Icon(color='blue')).add_to(m)
+        nearby = get_nearby_cre(lat, lon)
+
+        for prop in nearby:
+            try:
+                folium.Marker(
+                    [prop["location"]["latitude"], prop["location"]["longitude"]],
+                    tooltip=prop["address"]["line1"],
+                    icon=folium.Icon(color='green', icon="building")
+                ).add_to(m)
+            except:
+                continue
+
+        st_folium(m, width=700)
+
+        st.subheader("📬 Owner Contact Info")
+        domain = extract_domain_from_owner(owner_name)
+        email = get_email_from_hunter(domain)
+        st.write(f"**Owner:** {owner_name}")
+        st.write(f"**Guessed Domain:** {domain}")
+        st.write(f"**Email (via Hunter.io):** {email}")
