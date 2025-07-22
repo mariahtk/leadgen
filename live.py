@@ -9,7 +9,7 @@ HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
 @st.cache_data(show_spinner=False)
 def lookup_property(address, city, state, postalcode):
-    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
     headers = {"apikey": ATTOM_API_KEY}
     params = {
         "address1": address,
