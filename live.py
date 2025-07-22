@@ -344,11 +344,8 @@ for i, row in df_results_sorted.iterrows():
 st.markdown("""
 ---
 **Notes:**
-
-- Canadian data is from a static mapping of major cities (replace with detailed API or dataset as needed).
 - Population growth is calculated only for US cities (2010→2021).
 - Transit stops data comes from OpenStreetMap around city center.
-- ATTOM API commercial property prices used when API key and city/state info is available.
-- Adjust scoring weights in the sidebar to tailor prioritization to your strategy.
+- Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
 """)
