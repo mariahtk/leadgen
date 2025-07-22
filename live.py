@@ -8,11 +8,6 @@ import pandas as pd
 ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
 HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
-# === Functions ===
-
-# API Keys (replace with yours)
-ATTOM_API_KEY = st.secrets["ATTOM_API_KEY"]
-HUNTER_API_KEY = st.secrets["HUNTER_API_KEY"]
 
 # --- Streamlit UI ---
 st.title("🏙️ Commercial Property Lead Generator")
