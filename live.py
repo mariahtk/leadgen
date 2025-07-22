@@ -1,27 +1,23 @@
-import streamlit as st
-import requests
-import folium
-from folium.plugins import MarkerCluster
-from streamlit_folium import st_folium
-
-# === API KEYS ===
-ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
-HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
-
 @st.cache_data(show_spinner=False)
-def get_property_info(address, state, zip_code):
-    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+def lookup_property(address, state, postalcode):
+    base_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
     headers = {"apikey": ATTOM_API_KEY}
     params = {
         "address1": address,
-        "postalcode": zip_code,
-        "state": state
+        "state": state,
+        "postalcode": postalcode,
+        "page": 1,
+        "pagesize": 1
     }
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(base_url, headers=headers, params=params)
         response.raise_for_status()
-        json_data = response.json()
-        return json_data.get("property", [None])[0]
+        data = response.json()
+        properties = data.get("property", [])
+        if properties:
+            return properties[0]
+        else:
+            return None
     except Exception as e:
         st.error(f"ATTOM API Error: {e}")
         return None
@@ -58,7 +54,6 @@ def get_email_from_hunter(domain):
         return "N/A"
 
 def extract_domain_from_owner(owner_name):
-    # Basic domain guesser — improve as needed
     return owner_name.replace(" ", "").lower() + ".com"
 
 def main():
@@ -67,17 +62,16 @@ def main():
 
     with st.form("property_form"):
         address = st.text_input("Street Address", "1600 Amphitheatre Parkway")
-        # city removed from form inputs since not used in ATTOM API call
         state = st.text_input("State (2-letter code)", "CA")
-        zip_code = st.text_input("ZIP Code", "94043")
+        postalcode = st.text_input("ZIP Code", "94043")
         submitted = st.form_submit_button("Search")
 
     if submitted:
-        if not all([address, state, zip_code]):
+        if not all([address, state, postalcode]):
             st.warning("Please fill in all fields.")
             return
 
-        data = get_property_info(address, state, zip_code)
+        data = lookup_property(address, state, postalcode)
         if not data:
             st.error("No property found.")
             return
