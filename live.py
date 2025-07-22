@@ -1,3 +1,12 @@
+import streamlit as st
+import requests
+import folium
+from folium.plugins import MarkerCluster
+from streamlit_folium import st_folium
+
+ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
+HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
+
 @st.cache_data(show_spinner=False)
 def lookup_property(address, state, postalcode):
     base_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
