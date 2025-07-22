@@ -1,0 +1,88 @@
+import streamlit as st
+import requests
+import pandas as pd
+import folium
+from streamlit_folium import st_folium
+
+# === API KEYS ===
+ESTATED_API_KEY = 'YOUR_ESTATED_API_KEY'
+CLEARBIT_API_KEY = 'YOUR_CLEARBIT_API_KEY'
+HUNTER_API_KEY = 'YOUR_HUNTER_API_KEY'
+
+# === FUNCTIONS ===
+
+def lookup_property(address):
+    url = f"https://api.estated.com/v4/property?token={ESTATED_API_KEY}&address={address}"
+    res = requests.get(url)
+    if res.status_code == 200:
+        return res.json().get("data", {})
+    else:
+        return {}
+
+def enrich_with_clearbit(domain):
+    headers = {
+        'Authorization': f'Bearer {CLEARBIT_API_KEY}'
+    }
+    res = requests.get(f"https://company.clearbit.com/v2/companies/find?domain={domain}", headers=headers)
+    if res.status_code == 200:
+        return res.json()
+    else:
+        return {}
+
+def lookup_email_with_hunter(domain):
+    headers = {
+        "Accept": "application/json"
+    }
+    res = requests.get(f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_API_KEY}", headers=headers)
+    if res.status_code == 200:
+        return res.json().get("data", {}).get("emails", [])
+    return []
+
+# === STREAMLIT UI ===
+
+st.title("🏢 Commercial Property Lookup & Owner Contact Demo")
+
+address = st.text_input("Enter an address (USA):", "1600 Amphitheatre Parkway, Mountain View, CA")
+
+if address:
+    st.subheader("📦 Property Details")
+    data = lookup_property(address)
+    if data:
+        st.json(data)
+
+        # Show map
+        lat = data.get('structure', {}).get('latitude') or data.get('location', {}).get('latitude')
+        lon = data.get('structure', {}).get('longitude') or data.get('location', {}).get('longitude')
+
+        if lat and lon:
+            st.subheader("🗺️ Location Map")
+            m = folium.Map(location=[lat, lon], zoom_start=16)
+            folium.Marker([lat, lon], tooltip="Property").add_to(m)
+            st_folium(m, width=700)
+
+        # Owner enrichment
+        owner_name = data.get("owner", {}).get("name")
+        domain = data.get("owner", {}).get("corporate_owner", {}).get("website")
+
+        if domain:
+            st.subheader("📇 Owner Contact Info via Clearbit")
+            enriched = enrich_with_clearbit(domain)
+            if enriched:
+                st.write("**Name:**", enriched.get("name"))
+                st.write("**Phone:**", enriched.get("phone"))
+                st.write("**Email:**", enriched.get("site", {}).get("email"))
+                st.write("**Website:**", enriched.get("domain"))
+            else:
+                st.warning("Clearbit enrichment failed.")
+
+            st.subheader("📧 Email Fallback via Hunter.io")
+            emails = lookup_email_with_hunter(domain)
+            if emails:
+                df = pd.DataFrame(emails)
+                st.dataframe(df[['value', 'type', 'confidence']])
+            else:
+                st.warning("No emails found via Hunter.io.")
+        else:
+            st.warning("No corporate domain found for owner.")
+    else:
+        st.error("No data found for the address.")
