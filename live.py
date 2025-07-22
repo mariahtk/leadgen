@@ -8,30 +8,6 @@ ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"
 HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
 @st.cache_data(show_spinner=False)
-def lookup_property(address, state, postalcode):
-    base_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
-    headers = {"apikey": ATTOM_API_KEY}
-    params = {
-        "address1": address,
-        "state": state,
-        "postalcode": postalcode,
-        "page": 1,
-        "pagesize": 1
-    }
-    try:
-        response = requests.get(base_url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-        properties = data.get("property", [])
-        if properties:
-            return properties[0]
-        else:
-            return None
-    except Exception as e:
-        st.error(f"ATTOM API Error: {e}")
-        return None
-
-@st.cache_data(show_spinner=False)
 def get_nearby_cre(lat, lon):
     url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/area/geo/point"
     headers = {"apikey": ATTOM_API_KEY}
@@ -64,6 +40,50 @@ def get_email_from_hunter(domain):
 
 def extract_domain_from_owner(owner_name):
     return owner_name.replace(" ", "").lower() + ".com"
+
+def lookup_property(address, state, postalcode):
+    tokens = address.split(" ", 1)
+    street_number = tokens[0] if len(tokens) > 0 else ""
+    street_name = tokens[1] if len(tokens) > 1 else ""
+
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+    headers = {"apikey": ATTOM_API_KEY}
+    params = {
+        "streetNumber": street_number,
+        "streetName": street_name,
+        "state": state,
+        "postalcode": postalcode,
+        "page": 1,
+        "pagesize": 1
+    }
+
+    # Debug info shown in the app
+    st.write(f"Request URL: {url}")
+    st.write(f"Params: {params}")
+
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        st.write(f"Response status code: {response.status_code}")
+        response.raise_for_status()
+        data = response.json()
+        st.write("Full response JSON:")
+        st.json(data)
+
+        properties = data.get("property", [])
+        if properties:
+            return properties[0]
+        else:
+            st.warning("No properties found in response.")
+            return None
+    except Exception as e:
+        st.error(f"ATTOM API Error: {e}")
+        if response is not None:
+            try:
+                st.write("Error response content:")
+                st.json(response.json())
+            except Exception:
+                st.write(response.text)
+        return None
 
 def main():
     st.title("🏢 Commercial Real Estate Finder")
