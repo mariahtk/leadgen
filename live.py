@@ -10,23 +10,28 @@ HUNTER_API_KEY = "c95429706ea4eb1569e52e390a3913113a18fab0"
 
 # --- Helper Functions ---
 
+@st.cache_data(show_spinner=False)
 def get_property_info(address, city, state, zip_code):
-    url = f"https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
-    headers = {
-        "apikey": ATTOM_API_KEY
-    }
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+    headers = {"apikey": ATTOM_API_KEY}
     params = {
         "address1": address,
-        "address2": f"{city}, {state} {zip_code}"
+        "city": city,
+        "state": state,
+        "postalcode": zip_code
     }
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        st.error(f"ATTOM API Error: {response.status_code} - {response.text}")
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        json_data = response.json()
+        return json_data.get("property", [None])[0]
+    except Exception as e:
+        st.error(f"ATTOM API Error: {e}")
         return None
-    return response.json().get("property", [])[0]
 
+@st.cache_data(show_spinner=False)
 def get_nearby_cre(lat, lon):
-    url = f"https://api.gateway.attomdata.com/propertyapi/v1.0.0/area/geo/point"
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/area/geo/point"
     headers = {"apikey": ATTOM_API_KEY}
     params = {
         "latitude": lat,
@@ -34,71 +39,94 @@ def get_nearby_cre(lat, lon):
         "radius": 1,
         "propertytype": "COM"
     }
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        st.error(f"ATTOM Nearby API Error: {response.status_code} - {response.text}")
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        json_data = response.json()
+        return json_data.get("property", [])[:5]
+    except Exception as e:
+        st.error(f"ATTOM Nearby API Error: {e}")
         return []
-    return response.json().get("property", [])[:5]
 
 def get_email_from_hunter(domain):
     url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_API_KEY}"
-    response = requests.get(url)
-    if response.status_code != 200:
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        emails = data.get("data", {}).get("emails", [])
+        return emails[0]["value"] if emails else "N/A"
+    except Exception as e:
+        st.error(f"Hunter API Error: {e}")
         return "N/A"
-    data = response.json()
-    emails = data.get("data", {}).get("emails", [])
-    return emails[0]["value"] if emails else "N/A"
 
 def extract_domain_from_owner(owner_name):
-    # Dummy domain parser (you could use Clearbit if allowed)
+    # Basic domain guesser - you can improve this with real parsing
     return owner_name.replace(" ", "").lower() + ".com"
 
-# --- Streamlit UI ---
+def main():
+    st.title("🏢 Commercial Real Estate Finder")
+    st.write("Search for a property and find nearby commercial properties + owner contact info.")
 
-st.title("🏢 Commercial Real Estate Finder")
-st.write("Search for a property and find nearby commercial properties + owner contact info.")
+    with st.form("property_form"):
+        address = st.text_input("Street Address", "1600 Amphitheatre Parkway")
+        city = st.text_input("City", "Mountain View")
+        state = st.text_input("State (2-letter code)", "CA")
+        zip_code = st.text_input("ZIP Code", "94043")
+        submitted = st.form_submit_button("Search")
 
-with st.form("property_form"):
-    address = st.text_input("Street Address", "1600 Amphitheatre Parkway")
-    city = st.text_input("City", "Mountain View")
-    state = st.text_input("State", "CA")
-    zip_code = st.text_input("ZIP Code", "94043")
-    submitted = st.form_submit_button("Search")
+    if submitted:
+        if not all([address, city, state, zip_code]):
+            st.warning("Please fill in all fields.")
+            return
 
-if submitted:
-    data = get_property_info(address, city, state, zip_code)
-    if not data:
-        st.error("No property found.")
-    else:
-        lat = data["location"]["latitude"]
-        lon = data["location"]["longitude"]
+        data = get_property_info(address, city, state, zip_code)
+        if not data:
+            st.error("No property found.")
+            return
+
+        lat = data.get("location", {}).get("latitude")
+        lon = data.get("location", {}).get("longitude")
+        if not lat or not lon:
+            st.error("No location data found for this property.")
+            return
+
         owner_name = data.get("owner", {}).get("owner1", "Unknown Owner")
 
         st.subheader("🔍 Property Information")
-        st.write(data)
+        st.json(data)
 
         st.subheader("📍 Map View with Nearby CRE")
         m = folium.Map(location=[lat, lon], zoom_start=15)
-        MarkerCluster().add_to(m)
+        marker_cluster = MarkerCluster()
+        marker_cluster.add_to(m)
 
-        folium.Marker([lat, lon], tooltip="Your Property", icon=folium.Icon(color='blue')).add_to(m)
+        folium.Marker([lat, lon], tooltip="Your Property", icon=folium.Icon(color='blue')).add_to(marker_cluster)
+
         nearby = get_nearby_cre(lat, lon)
-
         for prop in nearby:
             try:
+                plat = prop["location"]["latitude"]
+                plon = prop["location"]["longitude"]
                 folium.Marker(
-                    [prop["location"]["latitude"], prop["location"]["longitude"]],
+                    [plat, plon],
                     tooltip=prop["address"]["line1"],
                     icon=folium.Icon(color='green', icon="building")
-                ).add_to(m)
-            except:
+                ).add_to(marker_cluster)
+            except Exception:
                 continue
 
         st_folium(m, width=700)
 
         st.subheader("📬 Owner Contact Info")
         domain = extract_domain_from_owner(owner_name)
-        email = get_email_from_hunter(domain)
-        st.write(f"**Owner:** {owner_name}")
-        st.write(f"**Guessed Domain:** {domain}")
-        st.write(f"**Email (via Hunter.io):** {email}")
+
+        hunter_lookup = st.button("Look up Owner Email via Hunter.io")
+        if hunter_lookup:
+            email = get_email_from_hunter(domain)
+            st.write(f"**Owner:** {owner_name}")
+            st.write(f"**Guessed Domain:** {domain}")
+            st.write(f"**Email (via Hunter.io):** {email}")
+
+if __name__ == "__main__":
+    main()
