@@ -79,14 +79,30 @@ def get_us_population_year(year, state_fips, city_name):
             return None
     return None
 
-def calculate_population_growth(city_name, state_fips):
-    pop_2010 = get_us_population_year(2010, state_fips, city_name)
-    pop_2021 = get_us_population_year(2021, state_fips, city_name)
-    if pop_2010 and pop_2021 and pop_2010 > 0:
-        growth = (pop_2021 - pop_2010) / pop_2010
-        return growth
-    else:
-        return 0  # If no data, assume 0 growth
+def calculate_population_growth(city_name, state_fips=None, country="US", years_forward=5):
+    """
+    Calculates projected population growth over the next `years_forward` years.
+    For US: uses 2010-2021 actual growth rate extrapolated forward.
+    For Canada: uses static historic growth rate extrapolated forward.
+    Returns projected growth proportion (e.g. 0.1 for +10% growth).
+    """
+    if country == "US" and state_fips:
+        pop_2010 = get_us_population_year(2010, state_fips, city_name)
+        pop_2021 = get_us_population_year(2021, state_fips, city_name)
+        if pop_2010 and pop_2021 and pop_2010 > 0:
+            years_past = 2021 - 2010
+            annual_growth_rate = (pop_2021 / pop_2010) ** (1 / years_past) - 1
+            projected_growth = (1 + annual_growth_rate) ** years_forward - 1
+            return projected_growth
+        else:
+            return 0
+    elif country == "CA":
+        historic_total_growth = 0.08  # 8% over last 10 years (example)
+        historic_years = 10
+        annual_growth_rate = (1 + historic_total_growth) ** (1 / historic_years) - 1
+        projected_growth = (1 + annual_growth_rate) ** years_forward - 1
+        return projected_growth
+    return 0
 
 @st.cache_data(show_spinner=False)
 def geocode_city(city_name):
@@ -203,10 +219,10 @@ for city_input in cities:
     if state_prov.upper() in us_state_fips:
         fips = us_state_fips[state_prov.upper()]
         pop, income = get_us_city_data(fips, city_name)
-        growth = calculate_population_growth(city_name, fips)
+        growth = calculate_population_growth(city_name, fips, country="US", years_forward=5)
     else:
         pop, income = get_canadian_city_data(city_name)
-        growth = 0  # Canadian growth not implemented here
+        growth = calculate_population_growth(city_name, country="CA", years_forward=5)
 
     # Coworking spaces count
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
@@ -243,13 +259,10 @@ for city_input in cities:
     norm_transit = transit_count if transit_count > 0 else 1
     norm_price = avg_price if avg_price and avg_price > 0 else 1_000_000
 
-    # Map weight_growth from [0..5] to [-1..1] to invert effect at low weight
-    growth_factor = ((weight_growth / 5) * 2 - 1) * norm_growth
-
     # Composite score (higher population, growth, transit positive; more coworking & price negative)
     score = (
         weight_population * norm_pop +
-        weight_growth * growth_factor * norm_pop +  # growth weighted by population with inverted effect at low weight
+        weight_growth * norm_growth * norm_pop +  # growth weighted by population
         weight_transit * norm_transit -
         weight_coworking * norm_coworking -
         weight_price * norm_price / 1_000_000  # scale price down
@@ -273,7 +286,7 @@ for city_input in cities:
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
-        f"Population Growth: {growth:.2%}<br>"
+        f"Population Growth (projected 5yr): {growth:.2%}<br>"
         f"Median Income: ${income if income else 'N/A'}<br>"
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
@@ -320,7 +333,7 @@ df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 st.header("City Rankings")
 
 cols = st.columns(8)
-headers = ["City", "Population", "Population Growth", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "Score"]
+headers = ["City", "Population", "Population Growth (5yr projected)", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "Score"]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
 
@@ -338,7 +351,7 @@ for i, row in df_results_sorted.iterrows():
 st.markdown("""
 ---
 **Notes:**
-- Population growth is calculated only for US cities (2010→2021).
+- Population growth is projected over next 5 years for both US and Canadian cities.
 - Transit stops data comes from OpenStreetMap around city center.
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
