@@ -405,3 +405,11 @@ hide_streamlit_style = """
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# --- Hide Streamlit Toolbar Buttons ---
+hide_streamlit_style = """
+    <style>
+    [data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
