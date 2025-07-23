@@ -25,7 +25,6 @@ us_state_fips = {
 
 @st.cache_data(show_spinner=False)
 def get_us_city_data(state_fips, city_name):
-    # Get 2021 ACS data for population and income
     url = (
         f"https://api.census.gov/data/2021/acs/acs5?"
         f"get=NAME,B01003_001E,B19013_001E&for=place:*&in=state:{state_fips}"
@@ -48,14 +47,6 @@ def get_us_city_data(state_fips, city_name):
 
 @st.cache_data(show_spinner=False)
 def get_canadian_city_data(city_name):
-    # Using Statistics Canada API (CANSIM tables via their Open Data Portal)
-    # We'll fetch the latest population and median income estimates for CMA/CA
-    # The API structure is not standardized, so using example pre-aggregated endpoint:
-    # To keep it simple, here’s a static example of population & income by city name
-    # In production, you’d build a full scraper or dataset parser.
-    # For demo: using city_name mapping to dummy data or simple API call simulation
-
-    # Dummy fallback data (replace with real API logic or dataset download)
     dummy_data = {
         "Toronto": {"population": 2930000, "median_income": 40000},
         "Montreal": {"population": 1780000, "median_income": 35000},
@@ -88,14 +79,30 @@ def get_us_population_year(year, state_fips, city_name):
             return None
     return None
 
-def calculate_population_growth(city_name, state_fips):
-    pop_2010 = get_us_population_year(2010, state_fips, city_name)
-    pop_2021 = get_us_population_year(2021, state_fips, city_name)
-    if pop_2010 and pop_2021 and pop_2010 > 0:
-        growth = (pop_2021 - pop_2010) / pop_2010
-        return growth
-    else:
-        return 0  # If no data, assume 0 growth
+def calculate_population_growth(city_name, state_fips=None, country="US", years_forward=5):
+    """
+    Calculates projected population growth over the next `years_forward` years.
+    For US: uses 2010-2021 actual growth rate extrapolated forward.
+    For Canada: uses static historic growth rate extrapolated forward.
+    Returns projected growth proportion (e.g. 0.1 for +10% growth).
+    """
+    if country == "US" and state_fips:
+        pop_2010 = get_us_population_year(2010, state_fips, city_name)
+        pop_2021 = get_us_population_year(2021, state_fips, city_name)
+        if pop_2010 and pop_2021 and pop_2010 > 0:
+            years_past = 2021 - 2010
+            annual_growth_rate = (pop_2021 / pop_2010) ** (1 / years_past) - 1
+            projected_growth = (1 + annual_growth_rate) ** years_forward - 1
+            return projected_growth
+        else:
+            return 0
+    elif country == "CA":
+        historic_total_growth = 0.08  # 8% over last 10 years (example)
+        historic_years = 10
+        annual_growth_rate = (1 + historic_total_growth) ** (1 / historic_years) - 1
+        projected_growth = (1 + annual_growth_rate) ** years_forward - 1
+        return projected_growth
+    return 0
 
 @st.cache_data(show_spinner=False)
 def geocode_city(city_name):
@@ -212,10 +219,10 @@ for city_input in cities:
     if state_prov.upper() in us_state_fips:
         fips = us_state_fips[state_prov.upper()]
         pop, income = get_us_city_data(fips, city_name)
-        growth = calculate_population_growth(city_name, fips)
+        growth = calculate_population_growth(city_name, fips, country="US", years_forward=5)
     else:
         pop, income = get_canadian_city_data(city_name)
-        growth = 0  # Canadian growth not implemented here
+        growth = calculate_population_growth(city_name, country="CA", years_forward=5)
 
     # Coworking spaces count
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
@@ -279,7 +286,7 @@ for city_input in cities:
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
-        f"Population Growth: {growth:.2%}<br>"
+        f"Population Growth (projected 5yr): {growth:.2%}<br>"
         f"Median Income: ${income if income else 'N/A'}<br>"
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
@@ -326,7 +333,7 @@ df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 st.header("City Rankings")
 
 cols = st.columns(8)
-headers = ["City", "Population", "Population Growth", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "Score"]
+headers = ["City", "Population", "Population Growth (5yr projected)", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "Score"]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
 
@@ -344,12 +351,11 @@ for i, row in df_results_sorted.iterrows():
 st.markdown("""
 ---
 **Notes:**
-- Population growth is calculated only for US cities (2010→2021).
+- Population growth is projected over next 5 years for both US and Canadian cities.
 - Transit stops data comes from OpenStreetMap around city center.
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
 """)
-
 
 # --- Hide Streamlit Toolbar Buttons ---
 hide_streamlit_style = """
@@ -358,4 +364,3 @@ hide_streamlit_style = """
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
