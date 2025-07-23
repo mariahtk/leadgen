@@ -10,6 +10,16 @@ from datetime import datetime
 ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"  # Replace with your ATTOM key
 
 
+# Load Excel data once
+@st.cache_data(show_spinner=False)
+def load_excel_data():
+    df = pd.read_excel("City.xlsx")
+    # Normalize Centre column to lower for matching
+    df['Centre_lower'] = df['Centre'].str.lower()
+    return df
+
+city_excel_df = load_excel_data()
+
 us_state_fips = {
     'AL': '01', 'AK': '02', 'AZ': '04', 'AR': '05', 'CA': '06',
     'CO': '08', 'CT': '09', 'DE': '10', 'FL': '12', 'GA': '13',
@@ -178,13 +188,15 @@ def get_attom_commercial_properties(city, state, attom_api_key, page=1):
     else:
         return None
 
-# Sidebar for weights
+# Sidebar for weights including new ones for SQM Occupancy and Efficiency
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
 weight_coworking = st.sidebar.slider("Competition (Coworking Spaces) Weight", 0.0, 5.0, 1.0, 0.1)
 weight_transit = st.sidebar.slider("Transit Accessibility Weight", 0.0, 5.0, 1.0, 0.1)
 weight_price = st.sidebar.slider("Commercial Price Weight", 0.0, 5.0, 1.0, 0.1)
+weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1)
+weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
 
@@ -202,6 +214,10 @@ map_center = [39.8283, -98.5795]  # Center of USA for initial map
 m = folium.Map(location=map_center, zoom_start=4)
 markers_group = folium.FeatureGroup(name="Coworking Spaces")
 transit_group = folium.FeatureGroup(name="Transit Stops")
+
+# Get max occupancy and efficiency from Excel for normalization
+max_occupancy = city_excel_df['SQM Occupancy'].max() if 'SQM Occupancy' in city_excel_df.columns else 1
+max_efficiency = city_excel_df['Efficiency'].max() if 'Efficiency' in city_excel_df.columns else 1
 
 for city_input in cities:
     if ',' in city_input:
@@ -237,7 +253,7 @@ for city_input in cities:
 
     # ATTOM commercial price
     avg_price = None
-    if ATTOM_API_KEY and state_prov:
+    if "ATTOM_API_KEY" in globals() and ATTOM_API_KEY and state_prov:
         attom_data = get_attom_commercial_properties(city_name, state_prov, ATTOM_API_KEY)
         prices = []
         if attom_data:
@@ -252,20 +268,34 @@ for city_input in cities:
             if prices:
                 avg_price = sum(prices) / len(prices)
 
+    # Find occupancy and efficiency from Excel (match on centre column, case insensitive)
+    centre_key = city_input.lower()
+    match_row = city_excel_df[city_excel_df['Centre_lower'] == centre_key]
+    if not match_row.empty:
+        occupancy = float(match_row.iloc[0]['SQM Occupancy']) if 'SQM Occupancy' in match_row.columns else 0
+        efficiency = float(match_row.iloc[0]['Efficiency']) if 'Efficiency' in match_row.columns else 0
+    else:
+        occupancy = 0
+        efficiency = 0
+
     # Normalize metrics (avoid zero division)
     norm_pop = pop if pop else 1
     norm_growth = growth if growth else 0
     norm_coworking = coworking_count if coworking_count > 0 else 1
     norm_transit = transit_count if transit_count > 0 else 1
     norm_price = avg_price if avg_price and avg_price > 0 else 1_000_000
+    norm_occupancy = occupancy / max_occupancy if max_occupancy > 0 else 0
+    norm_efficiency = efficiency / max_efficiency if max_efficiency > 0 else 0
 
-    # Composite score (higher population, growth, transit positive; more coworking & price negative)
+    # Composite score (higher population, growth, transit, occupancy, efficiency positive; coworking & price negative)
     score = (
         weight_population * norm_pop +
         weight_growth * norm_growth * norm_pop +  # growth weighted by population
         weight_transit * norm_transit -
         weight_coworking * norm_coworking -
-        weight_price * norm_price / 1_000_000  # scale price down
+        weight_price * norm_price / 1_000_000 +  # scale price down
+        weight_occupancy * norm_occupancy +
+        weight_efficiency * norm_efficiency
     )
 
     results.append({
@@ -276,6 +306,8 @@ for city_input in cities:
         "CoworkingSpaces": coworking_count,
         "TransitStops": transit_count,
         "AvgCommercialPrice": avg_price,
+        "SQM Occupancy": occupancy,
+        "Efficiency": efficiency,
         "Score": score,
         "Latitude": lat,
         "Longitude": lon,
@@ -332,13 +364,13 @@ df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 
 st.header("City Rankings")
 
-cols = st.columns(8)
-headers = ["City", "Population", "Population Growth (5yr projected)", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "Score"]
+cols = st.columns(10)
+headers = ["City", "Population", "Population Growth (5yr projected)", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "SQM Occupancy", "Efficiency", "Score"]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
 
 for i, row in df_results_sorted.iterrows():
-    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
     c1.write(row['City'])
     c2.write(f"{row['Population']:,}" if pd.notnull(row['Population']) else "N/A")
     c3.write(f"{row['Population Growth']:.2%}" if pd.notnull(row['Population Growth']) else "N/A")
@@ -346,7 +378,9 @@ for i, row in df_results_sorted.iterrows():
     c5.write(row['CoworkingSpaces'])
     c6.write(row['TransitStops'])
     c7.write(f"${row['AvgCommercialPrice']:,.0f}" if pd.notnull(row['AvgCommercialPrice']) else "N/A")
-    c8.write(f"{row['Score']:,.2f}")
+    c8.write(f"{row['SQM Occupancy']:.2f}" if pd.notnull(row['SQM Occupancy']) else "N/A")
+    c9.write(f"{row['Efficiency']:.2f}" if pd.notnull(row['Efficiency']) else "N/A")
+    c10.write(f"{row['Score']:,.2f}")
 
 st.markdown("""
 ---
@@ -355,6 +389,7 @@ st.markdown("""
 - Transit stops data comes from OpenStreetMap around city center.
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
+- SQM Occupancy and Efficiency data are loaded from City.xlsx and included in scoring.
 """)
 
 # --- Hide Streamlit Toolbar Buttons ---
