@@ -14,8 +14,8 @@ ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"  # Replace with your ATTOM ke
 # Load Excel data once
 @st.cache_data(show_spinner=False)
 def load_excel_data():
-    df = pd.read_excel("City.xlsx")
-    # Normalize Centre column to lower for matching
+    # Read Excel with headers on row 10 (index 9)
+    df = pd.read_excel("City.xlsx", header=9)
     df['Centre_lower'] = df['Centre'].str.lower()
     return df
 
@@ -91,12 +91,6 @@ def get_us_population_year(year, state_fips, city_name):
     return None
 
 def calculate_population_growth(city_name, state_fips=None, country="US", years_forward=5):
-    """
-    Calculates projected population growth over the next `years_forward` years.
-    For US: uses 2010-2021 actual growth rate extrapolated forward.
-    For Canada: uses static historic growth rate extrapolated forward.
-    Returns projected growth proportion (e.g. 0.1 for +10% growth).
-    """
     if country == "US" and state_fips:
         pop_2010 = get_us_population_year(2010, state_fips, city_name)
         pop_2021 = get_us_population_year(2021, state_fips, city_name)
@@ -108,7 +102,7 @@ def calculate_population_growth(city_name, state_fips=None, country="US", years_
         else:
             return 0
     elif country == "CA":
-        historic_total_growth = 0.08  # 8% over last 10 years (example)
+        historic_total_growth = 0.08
         historic_years = 10
         annual_growth_rate = (1 + historic_total_growth) ** (1 / historic_years) - 1
         projected_growth = (1 + annual_growth_rate) ** years_forward - 1
@@ -189,20 +183,15 @@ def get_attom_commercial_properties(city, state, attom_api_key, page=1):
     else:
         return None
 
-# Sidebar for weights including toggles for SQM Occupancy and Efficiency
+# Sidebar for weights including new ones for SQM Occupancy and Efficiency
 st.sidebar.header("Adjust Scoring Weights")
-
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
 weight_coworking = st.sidebar.slider("Competition (Coworking Spaces) Weight", 0.0, 5.0, 1.0, 0.1)
 weight_transit = st.sidebar.slider("Transit Accessibility Weight", 0.0, 5.0, 1.0, 0.1)
 weight_price = st.sidebar.slider("Commercial Price Weight", 0.0, 5.0, 1.0, 0.1)
-
-use_occupancy = st.sidebar.checkbox("Use SQM Occupancy Weight", value=True)
-weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1) if use_occupancy else 0.0
-
-use_efficiency = st.sidebar.checkbox("Use Efficiency Weight", value=True)
-weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1) if use_efficiency else 0.0
+weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1)
+weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
 
@@ -221,7 +210,6 @@ m = folium.Map(location=map_center, zoom_start=4)
 markers_group = folium.FeatureGroup(name="Coworking Spaces")
 transit_group = folium.FeatureGroup(name="Transit Stops")
 
-# Get max occupancy and efficiency from Excel for normalization
 max_occupancy = city_excel_df['SQM Occupancy'].max() if 'SQM Occupancy' in city_excel_df.columns else 1
 max_efficiency = city_excel_df['Efficiency'].max() if 'Efficiency' in city_excel_df.columns else 1
 
@@ -237,7 +225,6 @@ for city_input in cities:
         st.warning(f"Could not find coordinates for {city_input}")
         continue
 
-    # Get population and income
     if state_prov.upper() in us_state_fips:
         fips = us_state_fips[state_prov.upper()]
         pop, income = get_us_city_data(fips, city_name)
@@ -246,18 +233,15 @@ for city_input in cities:
         pop, income = get_canadian_city_data(city_name)
         growth = calculate_population_growth(city_name, country="CA", years_forward=5)
 
-    # Coworking spaces count
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
     if coworking_count is None:
         coworking_count = 0
         coworking_places = []
 
-    # Transit stops count
     transit_count = get_transit_stops_osm(lat, lon)
     if transit_count is None:
         transit_count = 0
 
-    # ATTOM commercial price
     avg_price = None
     if "ATTOM_API_KEY" in globals() and ATTOM_API_KEY and state_prov:
         attom_data = get_attom_commercial_properties(city_name, state_prov, ATTOM_API_KEY)
@@ -274,7 +258,6 @@ for city_input in cities:
             if prices:
                 avg_price = sum(prices) / len(prices)
 
-    # Find occupancy and efficiency from Excel (match on centre column, case insensitive)
     centre_key = city_input.lower()
     match_row = city_excel_df[city_excel_df['Centre_lower'] == centre_key]
     if not match_row.empty:
@@ -284,7 +267,6 @@ for city_input in cities:
         occupancy = 0
         efficiency = 0
 
-    # Normalize metrics (avoid zero division)
     norm_pop = pop if pop else 1
     norm_growth = growth if growth else 0
     norm_coworking = coworking_count if coworking_count > 0 else 1
@@ -293,13 +275,12 @@ for city_input in cities:
     norm_occupancy = occupancy / max_occupancy if max_occupancy > 0 else 0
     norm_efficiency = efficiency / max_efficiency if max_efficiency > 0 else 0
 
-    # Composite score (higher population, growth, transit, occupancy, efficiency positive; coworking & price negative)
     score = (
         weight_population * norm_pop +
-        weight_growth * norm_growth * norm_pop +  # growth weighted by population
+        weight_growth * norm_growth * norm_pop +
         weight_transit * norm_transit -
         weight_coworking * norm_coworking -
-        weight_price * norm_price / 1_000_000 +  # scale price down
+        weight_price * norm_price / 1_000_000 +
         weight_occupancy * norm_occupancy +
         weight_efficiency * norm_efficiency
     )
@@ -320,7 +301,6 @@ for city_input in cities:
         "CoworkingPlaces": coworking_places
     })
 
-    # Add city marker
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
@@ -332,7 +312,6 @@ for city_input in cities:
     )
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
 
-    # Coworking spaces markers (limit 20)
     for place in coworking_places[:20]:
         c_lat = place.get('lat') or place.get('center', {}).get('lat')
         c_lon = place.get('lon') or place.get('center', {}).get('lon')
@@ -347,7 +326,6 @@ for city_input in cities:
                 popup=name
             ).add_to(markers_group)
 
-    # Transit stops markers - to avoid overload, just mark city center with transit count
     folium.CircleMarker(
         location=[lat, lon],
         radius=7,
@@ -364,7 +342,6 @@ folium.LayerControl().add_to(m)
 st.header("Map of Cities, Coworking Spaces & Transit Stops")
 st_data = st_folium(m, width=700, height=500)
 
-# Results leaderboard
 df_results = pd.DataFrame(results)
 df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 
@@ -397,14 +374,6 @@ st.markdown("""
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
 - SQM Occupancy and Efficiency data are loaded from City.xlsx and included in scoring.
 """)
-
-# --- Hide Streamlit Toolbar Buttons ---
-hide_streamlit_style = """
-    <style>
-    [data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # --- Hide Streamlit Toolbar Buttons ---
 hide_streamlit_style = """
