@@ -4,6 +4,7 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from datetime import datetime
+import openpyxl
 
 
 # --- API KEYS (HARDCODE HERE) ---
