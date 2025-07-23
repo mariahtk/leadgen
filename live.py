@@ -188,15 +188,20 @@ def get_attom_commercial_properties(city, state, attom_api_key, page=1):
     else:
         return None
 
-# Sidebar for weights including new ones for SQM Occupancy and Efficiency
+# Sidebar for weights including toggles for SQM Occupancy and Efficiency
 st.sidebar.header("Adjust Scoring Weights")
+
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
 weight_coworking = st.sidebar.slider("Competition (Coworking Spaces) Weight", 0.0, 5.0, 1.0, 0.1)
 weight_transit = st.sidebar.slider("Transit Accessibility Weight", 0.0, 5.0, 1.0, 0.1)
 weight_price = st.sidebar.slider("Commercial Price Weight", 0.0, 5.0, 1.0, 0.1)
-weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1)
-weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
+
+use_occupancy = st.sidebar.checkbox("Use SQM Occupancy Weight", value=True)
+weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1) if use_occupancy else 0.0
+
+use_efficiency = st.sidebar.checkbox("Use Efficiency Weight", value=True)
+weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1) if use_efficiency else 0.0
 
 st.title("North America Co-Working Priority Rankings")
 
