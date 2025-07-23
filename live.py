@@ -349,3 +349,13 @@ st.markdown("""
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
 """)
+
+
+# --- Hide Streamlit Toolbar Buttons ---
+hide_streamlit_style = """
+    <style>
+    [data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
