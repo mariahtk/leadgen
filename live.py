@@ -179,7 +179,7 @@ weight_coworking = st.sidebar.slider("Competition (Coworking Spaces) Weight", 0.
 weight_transit = st.sidebar.slider("Transit Accessibility Weight", 0.0, 5.0, 1.0, 0.1)
 weight_price = st.sidebar.slider("Commercial Price Weight", 0.0, 5.0, 1.0, 0.1)
 
-st.title("North America Coworking Space Location Finder")
+st.title(""North America Co-Working Priority Rankings")
 
 st.markdown("""
 Enter one or more city names (comma separated), e.g. `Austin, TX`, `Toronto, ON`, `New York, NY`.
