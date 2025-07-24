@@ -124,7 +124,7 @@ def geocode_city(city_name):
 @st.cache_data(show_spinner=False)
 def get_coworking_osm(lat, lon, radius=10000):
     overpass_url = "http://overpass-api.de/api/interpreter"
-    query = f'''
+    query = f"""
     [out:json];
     (
       node["office"="coworking"](around:{radius},{lat},{lon});
@@ -132,7 +132,7 @@ def get_coworking_osm(lat, lon, radius=10000):
       relation["office"="coworking"](around:{radius},{lat},{lon});
     );
     out;
-    '''
+    """
     response = requests.post(overpass_url, data={'data': query})
     if response.status_code != 200:
         return None, []
@@ -143,7 +143,7 @@ def get_coworking_osm(lat, lon, radius=10000):
 @st.cache_data(show_spinner=False)
 def get_transit_stops_osm(lat, lon, radius=10000):
     overpass_url = "http://overpass-api.de/api/interpreter"
-    query = f'''
+    query = f"""
     [out:json];
     (
       node["public_transport"="platform"](around:{radius},{lat},{lon});
@@ -153,7 +153,7 @@ def get_transit_stops_osm(lat, lon, radius=10000):
       node["railway"="subway_entrance"](around:{radius},{lat},{lon});
     );
     out count;
-    '''
+    """
     response = requests.post(overpass_url, data={'data': query})
     if response.status_code != 200:
         return None
@@ -302,7 +302,7 @@ for city_input in cities:
         f"Median Income: ${income if income else 'N/A'}<br>"
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
-        + (f"Avg Commercial Price: ${avg_price:,.0f}" if avg_price else "N/A")
+        + (f"Avg Commercial Price: ${avg_price:,.0f}" if avg_price else "Avg Commercial Price: N/A")
     )
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
 
@@ -342,7 +342,11 @@ df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 st.header("City Rankings")
 
 cols = st.columns(10)
-headers = ["City", "Population", "Population Growth (5yr projected)", "Median Income", "Coworking Spaces", "Transit Stops", "Avg Commercial Price", "SQM Occupancy", "Efficiency", "Score"]
+headers = [
+    "City", "Population", "Population Growth (5yr projected)", "Median Income",
+    "Coworking Spaces", "Transit Stops", "Avg Commercial Price",
+    "SQM Occupancy", "Efficiency", "Score"
+]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
 
@@ -370,9 +374,9 @@ st.markdown("""
 """)
 
 # --- Hide Streamlit Toolbar Buttons ---
-hide_streamlit_style = '''
+hide_streamlit_style = """
     <style>
     [data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
     </style>
-'''
+"""
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
