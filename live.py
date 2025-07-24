@@ -161,36 +161,19 @@ def get_transit_stops_osm(lat, lon, radius=10000):
     count = len(data.get('elements', []))
     return count
 
-def get_attom_commercial_properties(city, state, attom_api_key, page=1):
-    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
-    headers = {"apikey": attom_api_key}
-    address = f"{city}, {state}"
-    params = {
-        "address1": address,
-        "pagesize": 10,
-        "page": page,
-        "propertytype": "commercial"
-    }
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        return None
-
 # Sidebar for weights including new ones for SQM Occupancy and Efficiency
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
 weight_coworking = st.sidebar.slider("Competition (Coworking Spaces) Weight", 0.0, 5.0, 1.0, 0.1)
 weight_transit = st.sidebar.slider("Transit Accessibility Weight", 0.0, 5.0, 1.0, 0.1)
-weight_price = st.sidebar.slider("Commercial Price Weight", 0.0, 5.0, 1.0, 0.1)
 weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1)
 weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
 
 st.markdown(
-    "Enter one or more city names (comma separated), e.g. Austin, TX, Toronto, ON, New York, NY."
+    "Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY."
 )
 
 city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
@@ -236,22 +219,6 @@ for city_input in cities:
     if transit_count is None:
         transit_count = 0
 
-    avg_price = None
-    if "ATTOM_API_KEY" in globals() and ATTOM_API_KEY and state_prov:
-        attom_data = get_attom_commercial_properties(city_name, state_prov, ATTOM_API_KEY)
-        prices = []
-        if attom_data:
-            properties = attom_data.get('property', [])
-            for prop in properties:
-                try:
-                    price_info = prop.get('property', {}).get('lastSale', {}).get('price')
-                    if price_info:
-                        prices.append(float(price_info))
-                except:
-                    pass
-            if prices:
-                avg_price = sum(prices) / len(prices)
-
     centre_key = city_input.lower()
     match_row = city_excel_df[city_excel_df['Centre_lower'] == centre_key]
     if not match_row.empty:
@@ -265,7 +232,6 @@ for city_input in cities:
     norm_growth = growth if growth else 0
     norm_coworking = coworking_count if coworking_count > 0 else 1
     norm_transit = transit_count if transit_count > 0 else 1
-    norm_price = avg_price if avg_price and avg_price > 0 else 1_000_000
     norm_occupancy = occupancy / max_occupancy if max_occupancy > 0 else 0
     norm_efficiency = efficiency / max_efficiency if max_efficiency > 0 else 0
 
@@ -273,8 +239,7 @@ for city_input in cities:
         weight_population * norm_pop +
         weight_growth * norm_growth * norm_pop +
         weight_transit * norm_transit -
-        weight_coworking * norm_coworking -
-        weight_price * norm_price / 1_000_000 +
+        weight_coworking * norm_coworking +
         weight_occupancy * norm_occupancy +
         weight_efficiency * norm_efficiency
     )
@@ -286,7 +251,6 @@ for city_input in cities:
         "MedianIncome": income,
         "CoworkingSpaces": coworking_count,
         "TransitStops": transit_count,
-        "AvgCommercialPrice": avg_price,
         "SQM Occupancy": occupancy,
         "Efficiency": efficiency,
         "Score": score,
@@ -295,7 +259,6 @@ for city_input in cities:
         "CoworkingPlaces": coworking_places
     })
 
-    # Build popup text carefully to avoid format errors
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
@@ -304,8 +267,6 @@ for city_input in cities:
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
     )
-    if avg_price:
-        popup_text += f"Avg Commercial Price: ${avg_price:,.0f}"
 
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
 
@@ -352,7 +313,6 @@ headers = [
     "Median Income",
     "Coworking Spaces",
     "Transit Stops",
-    "Avg Commercial Price",
     "SQM Occupancy",
     "Efficiency",
     "Score"
@@ -361,17 +321,16 @@ for col, header in zip(cols, headers):
     col.write(f"**{header}**")
 
 for i, row in df_results_sorted.iterrows():
-    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
+    c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(9)
     c1.write(row['City'])
     c2.write(f"{row['Population']:,}" if pd.notnull(row['Population']) else "N/A")
     c3.write(f"{row['Population Growth']:.2%}" if pd.notnull(row['Population Growth']) else "N/A")
     c4.write(f"${row['MedianIncome']:,}" if pd.notnull(row['MedianIncome']) else "N/A")
     c5.write(row['CoworkingSpaces'])
     c6.write(row['TransitStops'])
-    c7.write(f"${row['AvgCommercialPrice']:,.0f}" if pd.notnull(row['AvgCommercialPrice']) else "N/A")
-    c8.write(f"{row['SQM Occupancy']:.2f}" if pd.notnull(row['SQM Occupancy']) else "N/A")
-    c9.write(f"{row['Efficiency']:.2f}" if pd.notnull(row['Efficiency']) else "N/A")
-    c10.write(f"{row['Score']:,.2f}")
+    c7.write(f"{row['SQM Occupancy']:.2f}" if pd.notnull(row['SQM Occupancy']) else "N/A")
+    c8.write(f"{row['Efficiency']:.2f}" if pd.notnull(row['Efficiency']) else "N/A")
+    c9.write(f"{row['Score']:,.2f}")
 
 st.markdown(
     """
