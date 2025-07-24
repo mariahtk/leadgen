@@ -4,11 +4,6 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from datetime import datetime
-import openpyxl
-
-
-# --- API KEYS (HARDCODE HERE) ---
-ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"  # Replace with your ATTOM key
 
 # --- Load Excel data (headers start at row 10) ---
 @st.cache_data(show_spinner=False)
@@ -151,6 +146,12 @@ def get_transit_stops_osm(lat, lon, radius=10000):
         return 0
     return len(response.json().get('elements', []))
 
+def get_attom_commercial_properties(city, state, attom_api_key, page=1):
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+    headers = {"apikey": attom_api_key}
+    params = {"address1": f"{city}, {state}", "pagesize": 10, "page": page, "propertytype": "commercial"}
+    response = requests.get(url, headers=headers, params=params)
+    return response.json() if response.status_code == 200 else None
 
 # --- Sidebar weights ---
 st.sidebar.header("Adjust Scoring Weights")
@@ -197,8 +198,14 @@ for city_input in cities:
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
     transit_count = get_transit_stops_osm(lat, lon)
 
-    # --- No ATTOM Price Lookup ---
+    # --- ATTOM Prices ---
     avg_price = None
+    if "ATTOM_API_KEY" in globals() and ATTOM_API_KEY and state_prov:
+        attom_data = get_attom_commercial_properties(city_name, state_prov, ATTOM_API_KEY)
+        prices = [float(p.get('property', {}).get('lastSale', {}).get('price', 0))
+                  for p in attom_data.get('property', []) if p.get('property')]
+        if prices:
+            avg_price = sum(prices) / len(prices)
 
     # --- Match Excel Row ---
     match_row = city_excel_df[city_excel_df['Centre_lower'] == city_input.lower()]
