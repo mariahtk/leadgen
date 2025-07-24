@@ -152,12 +152,6 @@ def get_transit_stops_osm(lat, lon, radius=10000):
         return 0
     return len(response.json().get('elements', []))
 
-def get_attom_commercial_properties(city, state, attom_api_key, page=1):
-    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
-    headers = {"apikey": attom_api_key}
-    params = {"address1": f"{city}, {state}", "pagesize": 10, "page": page, "propertytype": "commercial"}
-    response = requests.get(url, headers=headers, params=params)
-    return response.json() if response.status_code == 200 else None
 
 # --- Sidebar weights ---
 st.sidebar.header("Adjust Scoring Weights")
