@@ -11,7 +11,6 @@ import openpyxl
 ATTOM_API_KEY = "7b9f39f8722159b30ca61f77279e829d"  # Replace with your ATTOM key
 
 
-# --- Load Excel data (headers start at row 10) ---
 @st.cache_data(show_spinner=False)
 def load_excel_data():
     df = pd.read_excel("City.xlsx", header=9)
@@ -152,7 +151,6 @@ def get_transit_stops_osm(lat, lon, radius=10000):
         return 0
     return len(response.json().get('elements', []))
 
-
 # --- Sidebar weights ---
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
@@ -198,12 +196,20 @@ for city_input in cities:
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
     transit_count = get_transit_stops_osm(lat, lon)
 
-    # --- ATTOM Prices ---
+    # --- ATTOM Prices (safe version) ---
     avg_price = None
     if "ATTOM_API_KEY" in globals() and ATTOM_API_KEY and state_prov:
         attom_data = get_attom_commercial_properties(city_name, state_prov, ATTOM_API_KEY)
-        prices = [float(p.get('property', {}).get('lastSale', {}).get('price', 0))
-                  for p in attom_data.get('property', []) if p.get('property')]
+        prices = []
+        if attom_data and isinstance(attom_data, dict):
+            for p in attom_data.get('property', []):
+                if isinstance(p, dict):
+                    price = p.get('property', {}).get('lastSale', {}).get('price')
+                    if price is not None:
+                        try:
+                            prices.append(float(price))
+                        except ValueError:
+                            pass
         if prices:
             avg_price = sum(prices) / len(prices)
 
