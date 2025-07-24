@@ -340,7 +340,6 @@ st.markdown(
 - Transit stops data comes from OpenStreetMap around city center.
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
-- SQM Occupancy and Efficiency data are loaded from City.xlsx and included in scoring.
 """
 )
 
