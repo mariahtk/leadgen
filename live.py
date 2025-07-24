@@ -189,9 +189,9 @@ weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
 
-st.markdown("""
-Enter one or more city names (comma separated), e.g. Austin, TX, Toronto, ON, New York, NY.
-""")
+st.markdown(
+    "Enter one or more city names (comma separated), e.g. Austin, TX, Toronto, ON, New York, NY."
+)
 
 city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
 
@@ -295,6 +295,7 @@ for city_input in cities:
         "CoworkingPlaces": coworking_places
     })
 
+    # Build popup text carefully to avoid format errors
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
@@ -302,8 +303,10 @@ for city_input in cities:
         f"Median Income: ${income if income else 'N/A'}<br>"
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
-        + (f"Avg Commercial Price: ${avg_price:,.0f}" if avg_price else "Avg Commercial Price: N/A")
     )
+    if avg_price:
+        popup_text += f"Avg Commercial Price: ${avg_price:,.0f}"
+
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
 
     for place in coworking_places[:20]:
@@ -343,9 +346,16 @@ st.header("City Rankings")
 
 cols = st.columns(10)
 headers = [
-    "City", "Population", "Population Growth (5yr projected)", "Median Income",
-    "Coworking Spaces", "Transit Stops", "Avg Commercial Price",
-    "SQM Occupancy", "Efficiency", "Score"
+    "City",
+    "Population",
+    "Population Growth (5yr projected)",
+    "Median Income",
+    "Coworking Spaces",
+    "Transit Stops",
+    "Avg Commercial Price",
+    "SQM Occupancy",
+    "Efficiency",
+    "Score"
 ]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
@@ -363,7 +373,8 @@ for i, row in df_results_sorted.iterrows():
     c9.write(f"{row['Efficiency']:.2f}" if pd.notnull(row['Efficiency']) else "N/A")
     c10.write(f"{row['Score']:,.2f}")
 
-st.markdown("""
+st.markdown(
+    """
 ---
 **Notes:**
 - Population growth is projected over next 5 years for both US and Canadian cities.
@@ -371,7 +382,8 @@ st.markdown("""
 - Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
 - Map shows city locations, coworking spaces (blue), and transit stops (green).
 - SQM Occupancy and Efficiency data are loaded from City.xlsx and included in scoring.
-""")
+"""
+)
 
 # --- Hide Streamlit Toolbar Buttons ---
 hide_streamlit_style = """
