@@ -4,30 +4,13 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from datetime import datetime
-import re
-
-# --- Helper function to extract city, province/state from Centre string ---
-def extract_city_province(centre_name):
-    parts = centre_name.split(",")
-    if len(parts) < 2:
-        return None
-    prov_match = re.search(r'([A-Z]{2})$', parts[0].strip())
-    if prov_match:
-        province = prov_match.group(1)
-    else:
-        province = ''
-    city_part = parts[1].split(" - ")[0].strip()
-    if province:
-        city_prov = f"{city_part}, {province}"
-    else:
-        city_prov = city_part
-    return city_prov.lower()
 
 # Load Excel data once
 @st.cache_data(show_spinner=False)
 def load_excel_data():
+    # Read from Map.xlsx -> Map sheet
     df = pd.read_excel("Map.xlsx", sheet_name="Map")
-    df['City_Prov_lower'] = df['Centre'].apply(extract_city_province)
+    df['Centre_lower'] = df['Centre'].str.lower()
     return df
 
 map_excel_df = load_excel_data()
@@ -171,7 +154,7 @@ def get_transit_stops_osm(lat, lon, radius=10000):
     data = response.json()
     return len(data.get('elements', []))
 
-# Sidebar for weights including new ones
+# Sidebar weights for scoring
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
@@ -188,42 +171,20 @@ st.title("North America Co-Working Priority Rankings")
 st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY.")
 
 city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
-user_cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
+cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
 
-# Auto-populate all unique cities from Excel data based on 'City_Prov_lower'
-all_unique_cities = map_excel_df['City_Prov_lower'].dropna().unique()
+# First pass: Collect raw data for all cities
+raw_results = []
 
-# Combine user input cities and auto-populated cities, removing duplicates
-combined_cities_lower = set([c.lower() for c in user_cities])
-for city in all_unique_cities:
-    if city not in combined_cities_lower:
-        combined_cities_lower.add(city)
-combined_cities = list(combined_cities_lower)
-
-results = []
-
-map_center = [39.8283, -98.5795]
-m = folium.Map(location=map_center, zoom_start=4)
-markers_group = folium.FeatureGroup(name="Coworking Spaces")
-transit_group = folium.FeatureGroup(name="Transit Stops")
-
-# Precompute max values for normalization - sum for sums, mean for means
-max_office_sqft = map_excel_df['Office Inv. SQFT'].sum() or 1
-max_total_centre_sqft = map_excel_df['Total centre SQFT'].sum() or 1
-max_efficiency = map_excel_df['Efficiency'].mean() or 1
-max_occupancy = map_excel_df['SQM Occupancy %'].mean() or 1
-max_cbitda = map_excel_df['CBITDA'].sum() or 1
-
-for city_lower in combined_cities:
-    city_for_geocode = city_lower.title()
-    if ',' in city_for_geocode:
-        city_name, state_prov = [x.strip() for x in city_for_geocode.split(',', 1)]
+for city_input in cities:
+    if ',' in city_input:
+        city_name, state_prov = [x.strip() for x in city_input.split(',', 1)]
     else:
-        city_name, state_prov = city_for_geocode, ""
+        city_name, state_prov = city_input, ""
 
-    lat, lon = geocode_city(city_for_geocode)
+    lat, lon = geocode_city(city_input)
     if lat is None or lon is None:
-        # Skip city if no coordinates found
+        st.warning(f"Could not find coordinates for {city_input}")
         continue
 
     if state_prov.upper() in us_state_fips:
@@ -240,27 +201,68 @@ for city_lower in combined_cities:
 
     transit_count = get_transit_stops_osm(lat, lon) or 0
 
-    # Find all centres matching this city
-    matching_centres = map_excel_df[map_excel_df['City_Prov_lower'] == city_lower]
+    # Match centres that contain the city_name and state in 'Centre_lower'
+    # Example centre: "5001_BC, Vancouver - Spaces Green Lamp"
+    # We'll check if "vancouver" and "bc" are substrings inside the centre string (case insensitive)
+    city_name_lower = city_name.lower()
+    state_prov_lower = state_prov.lower()
+    matching_centres = map_excel_df[
+        map_excel_df['Centre_lower'].apply(lambda x: city_name_lower in x and state_prov_lower in x)
+    ]
 
-    office_sqft = matching_centres['Office Inv. SQFT'].sum() if not matching_centres.empty else 0
-    total_centre_sqft = matching_centres['Total centre SQFT'].sum() if not matching_centres.empty else 0
-    efficiency = matching_centres['Efficiency'].mean() if not matching_centres.empty else 0
-    occupancy = matching_centres['SQM Occupancy %'].mean() if not matching_centres.empty else 0
-    cbitda = matching_centres['CBITDA'].sum() if not matching_centres.empty else 0
+    # Sum or average the metrics over matching centres
+    if not matching_centres.empty:
+        office_sqft = matching_centres['Office Inv. SQFT'].sum()
+        total_centre_sqft = matching_centres['Total centre SQFT'].sum()
+        efficiency = matching_centres['Efficiency'].mean()
+        occupancy = matching_centres['SQM Occupancy %'].mean()
+        cbitda = matching_centres['CBITDA'].sum()
+    else:
+        office_sqft = total_centre_sqft = efficiency = occupancy = cbitda = 0
 
-    # Normalize values for ranking
-    norm_pop = pop if pop else 1
-    norm_growth = growth if growth else 0
-    norm_coworking = coworking_count if coworking_count > 0 else 1
-    norm_transit = transit_count if transit_count > 0 else 1
-    norm_office_sqft = office_sqft / max_office_sqft if max_office_sqft else 0
-    norm_total_centre_sqft = total_centre_sqft / max_total_centre_sqft if max_total_centre_sqft else 0
-    norm_efficiency = efficiency / max_efficiency if max_efficiency else 0
-    norm_occupancy = occupancy / max_occupancy if max_occupancy else 0
-    norm_cbitda = cbitda / max_cbitda if max_cbitda else 0
+    raw_results.append({
+        "City": city_input,
+        "Population": pop if pop else 0,
+        "Population Growth": growth if growth else 0,
+        "MedianIncome": income if income else 0,
+        "CoworkingSpaces": coworking_count,
+        "TransitStops": transit_count,
+        "Office Inv. SQFT": office_sqft,
+        "Total centre SQFT": total_centre_sqft,
+        "Efficiency": efficiency,
+        "SQM Occupancy %": occupancy,
+        "CBITDA": cbitda,
+        "Latitude": lat,
+        "Longitude": lon,
+        "CoworkingPlaces": coworking_places
+    })
 
-    # Compute score using weights, higher values = higher weight
+# Compute max values for normalization from all raw data
+max_pop = max([r["Population"] for r in raw_results] + [1])
+max_growth = max([r["Population Growth"] for r in raw_results] + [1])
+max_coworking = max([r["CoworkingSpaces"] for r in raw_results] + [1])
+max_transit = max([r["TransitStops"] for r in raw_results] + [1])
+max_office_sqft = max([r["Office Inv. SQFT"] for r in raw_results] + [1])
+max_total_centre_sqft = max([r["Total centre SQFT"] for r in raw_results] + [1])
+max_efficiency = max([r["Efficiency"] for r in raw_results] + [1])
+max_occupancy = max([r["SQM Occupancy %"] for r in raw_results] + [1])
+max_cbitda = max([r["CBITDA"] for r in raw_results] + [1])
+
+# Second pass: Normalize, score and prepare final results
+results = []
+
+for r in raw_results:
+    norm_pop = r["Population"] / max_pop if max_pop > 0 else 0
+    norm_growth = r["Population Growth"] / max_growth if max_growth > 0 else 0
+    norm_coworking = r["CoworkingSpaces"] / max_coworking if max_coworking > 0 else 0
+    norm_transit = r["TransitStops"] / max_transit if max_transit > 0 else 0
+    norm_office_sqft = r["Office Inv. SQFT"] / max_office_sqft if max_office_sqft > 0 else 0
+    norm_total_centre_sqft = r["Total centre SQFT"] / max_total_centre_sqft if max_total_centre_sqft > 0 else 0
+    norm_efficiency = r["Efficiency"] / max_efficiency if max_efficiency > 0 else 0
+    norm_occupancy = r["SQM Occupancy %"] / max_occupancy if max_occupancy > 0 else 0
+    norm_cbitda = r["CBITDA"] / max_cbitda if max_cbitda > 0 else 0
+
+    # Score calculation: higher coworking spaces means more competition so subtract its weighted value
     score = (
         weight_population * norm_pop +
         weight_growth * norm_growth * norm_pop +
@@ -273,35 +275,38 @@ for city_lower in combined_cities:
         weight_cbitda * norm_cbitda
     )
 
-    results.append({
-        "City": city_for_geocode,
-        "Population": pop,
-        "Population Growth": growth,
-        "MedianIncome": income,
-        "CoworkingSpaces": coworking_count,
-        "TransitStops": transit_count,
-        "Office Inv. SQFT": office_sqft,
-        "Total centre SQFT": total_centre_sqft,
-        "Efficiency": efficiency,
-        "SQM Occupancy %": occupancy,
-        "CBITDA": cbitda,
-        "Score": score,
-        "Latitude": lat,
-        "Longitude": lon,
-        "CoworkingPlaces": coworking_places
-    })
+    r["Score"] = score
+    r["Normalized Population"] = norm_pop
+    r["Normalized Growth"] = norm_growth
+    r["Normalized Coworking"] = norm_coworking
+    r["Normalized Transit"] = norm_transit
+    results.append(r)
 
+# Map creation
+map_center = [39.8283, -98.5795]
+m = folium.Map(location=map_center, zoom_start=4)
+markers_group = folium.FeatureGroup(name="Coworking Spaces")
+transit_group = folium.FeatureGroup(name="Transit Stops")
+
+for r in results:
     popup_text = (
-        f"<b>{city_for_geocode}</b><br>"
-        f"Population: {pop if pop else 'N/A'}<br>"
-        f"Population Growth (projected 5yr): {growth:.2%}<br>"
-        f"Median Income: ${income if income else 'N/A'}<br>"
-        f"Coworking Spaces: {coworking_count}<br>"
-        f"Transit Stops: {transit_count}<br>"
+        f"<b>{r['City']}</b><br>"
+        f"Population: {r['Population']:,}<br>"
+        f"Population Growth (projected 5yr): {r['Population Growth']:.2%}<br>"
+        f"Median Income: ${r['MedianIncome']:,}<br>"
+        f"Coworking Spaces: {r['CoworkingSpaces']}<br>"
+        f"Transit Stops: {r['TransitStops']}<br>"
+        f"Office Inv. SQFT: {r['Office Inv. SQFT']:,}<br>"
+        f"Total centre SQFT: {r['Total centre SQFT']:,}<br>"
+        f"Efficiency: {r['Efficiency']:.2f}<br>"
+        f"SQM Occupancy %: {r['SQM Occupancy %']:.2f}<br>"
+        f"CBITDA: {r['CBITDA']:,}<br>"
+        f"<b>Score: {r['Score']:.3f}</b>"
     )
-    folium.Marker([lat, lon], popup=popup_text).add_to(m)
+    folium.Marker([r['Latitude'], r['Longitude']], popup=popup_text).add_to(m)
 
-    for place in coworking_places[:20]:
+    # Show coworking places in blue circles (up to 20)
+    for place in r['CoworkingPlaces'][:20]:
         c_lat = place.get('lat') or place.get('center', {}).get('lat')
         c_lon = place.get('lon') or place.get('center', {}).get('lon')
         name = place.get('tags', {}).get('name', 'Coworking Space')
@@ -312,9 +317,9 @@ for city_lower in combined_cities:
             ).add_to(markers_group)
 
     folium.CircleMarker(
-        location=[lat, lon], radius=7, color='green',
+        location=[r['Latitude'], r['Longitude']], radius=7, color='green',
         fill=True, fill_opacity=0.5,
-        popup=f"Transit stops: {transit_count}"
+        popup=f"Transit stops: {r['TransitStops']}"
     ).add_to(transit_group)
 
 markers_group.add_to(m)
@@ -335,13 +340,12 @@ st.dataframe(df_results[[
 ]])
 
 st.markdown(
-    "---\n"
-    "**Notes:**\n"
+    "---\n**Notes:**\n"
     "- Population growth is projected over next 5 years for both US and Canadian cities.\n"
     "- Transit stops data comes from OpenStreetMap.\n"
     "- Adjust scoring weights in the sidebar to tailor prioritization.\n"
     "- Map shows city locations, coworking spaces (blue), and transit stops (green)."
 )
 
-# Hide Streamlit toolbar for cleaner UI
+# Hide Streamlit toolbar
 st.markdown("<style>[data-testid='stToolbar'] {visibility: hidden; height: 0%; position: fixed;}</style>", unsafe_allow_html=True)
