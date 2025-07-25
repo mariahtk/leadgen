@@ -1,20 +1,45 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 import folium
 from streamlit_folium import st_folium
-from datetime import datetime
+from fuzzywuzzy import process
+import re
 
-# Load Excel data once
+# --- Load Excel Data ---
 @st.cache_data(show_spinner=False)
 def load_excel_data():
-    # Read Excel with headers on row 10 (index 9)
     df = pd.read_excel("City.xlsx", header=9)
     df['Centre_lower'] = df['Centre'].str.lower()
     return df
 
 city_excel_df = load_excel_data()
 
+# --- Extract City & Province from Centre Strings ---
+def extract_city_province(centre_value):
+    """
+    Converts '5001_BC, Vancouver - Spaces Green Lamp' -> 'Vancouver, BC'
+    """
+    match = re.match(r'^\d+_([A-Za-z]+),\s*([^-]+)', centre_value)
+    if match:
+        province = match.group(1).strip()
+        city = match.group(2).strip()
+        return f"{city}, {province}"
+    return centre_value
+
+# Precompute normalized centre names
+city_excel_df['Centre_normalized'] = city_excel_df['Centre'].apply(extract_city_province).str.lower()
+
+def find_centre_row(city_input, city_excel_df):
+    query = city_input.strip().lower()
+    centre_names = city_excel_df['Centre_normalized'].tolist()
+    best_match, score = process.extractOne(query, centre_names)
+    if score >= 80:
+        return city_excel_df[city_excel_df['Centre_normalized'] == best_match]
+    else:
+        return pd.DataFrame()
+
+# --- US State FIPS Codes ---
 us_state_fips = {
     'AL': '01', 'AK': '02', 'AZ': '04', 'AR': '05', 'CA': '06',
     'CO': '08', 'CT': '09', 'DE': '10', 'FL': '12', 'GA': '13',
@@ -161,7 +186,7 @@ def get_transit_stops_osm(lat, lon, radius=10000):
     count = len(data.get('elements', []))
     return count
 
-# Sidebar for weights including new ones for SQM Occupancy and Efficiency
+# Sidebar Weights
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
@@ -173,16 +198,14 @@ weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 st.title("North America Co-Working Priority Rankings")
 
 st.markdown(
-    "Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY."
+    "Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nVancouver, BC."
 )
 
-city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
-
+city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nVancouver, BC")
 cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
 results = []
 
-map_center = [39.8283, -98.5795]  # Center of USA for initial map
-
+map_center = [39.8283, -98.5795]
 m = folium.Map(location=map_center, zoom_start=4)
 markers_group = folium.FeatureGroup(name="Coworking Spaces")
 transit_group = folium.FeatureGroup(name="Transit Stops")
@@ -219,8 +242,8 @@ for city_input in cities:
     if transit_count is None:
         transit_count = 0
 
-    centre_key = city_input.lower()
-    match_row = city_excel_df[city_excel_df['Centre_lower'] == centre_key]
+    # Find occupancy and efficiency automatically from Excel
+    match_row = find_centre_row(city_input, city_excel_df)
     if not match_row.empty:
         occupancy = float(match_row.iloc[0]['SQM Occupancy']) if 'SQM Occupancy' in match_row.columns else 0
         efficiency = float(match_row.iloc[0]['Efficiency']) if 'Efficiency' in match_row.columns else 0
@@ -267,7 +290,6 @@ for city_input in cities:
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
     )
-
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
 
     for place in coworking_places[:20]:
