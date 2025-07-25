@@ -4,3 +4,5 @@ folium
 streamlit-folium
 python-dotenv
 openpyxl
+fuzzywuzzy[speedup]
+python-Levenshtein
