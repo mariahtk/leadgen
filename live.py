@@ -4,11 +4,11 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from datetime import datetime
+import re
 
-# Load Excel data once
+# --- Load Excel data once ---
 @st.cache_data(show_spinner=False)
 def load_excel_data():
-    # Read from Map.xlsx -> Map sheet
     df = pd.read_excel("Map.xlsx", sheet_name="Map")
     df['Centre_lower'] = df['Centre'].str.lower()
     return df
@@ -28,6 +28,7 @@ us_state_fips = {
     'VA': '51', 'WA': '53', 'WV': '54', 'WI': '55', 'WY': '56'
 }
 
+# --- Helper functions (copy your existing ones here exactly) ---
 @st.cache_data(show_spinner=False)
 def get_us_city_data(state_fips, city_name):
     url = (
@@ -154,7 +155,45 @@ def get_transit_stops_osm(lat, lon, radius=10000):
     data = response.json()
     return len(data.get('elements', []))
 
-# Sidebar weights for scoring
+# --- Extract city and state from Centre string ---
+def extract_city_state(centre_str):
+    centre_str = centre_str.lower()
+    parts = centre_str.split(',')
+    if len(parts) < 2:
+        return None, None
+    state_part = parts[0].strip()  # e.g. "5001_bc"
+    city_part = parts[1].strip()   # e.g. "vancouver - spaces green lamp"
+    match_state = re.search(r'([a-z]{2}|[0-9]{2,})$', state_part)
+    state = match_state.group(1) if match_state else ""
+    city = city_part.split(' - ')[0].strip()
+    return city.title(), state.upper()
+
+# --- Get unique cities from Excel centres ---
+unique_cities_states = set()
+for centre in map_excel_df['Centre_lower'].dropna():
+    city, state = extract_city_state(centre)
+    if city and state:
+        unique_cities_states.add((city, state))
+
+auto_cities = [f"{city}, {state}" for city, state in unique_cities_states]
+
+# --- User input cities ---
+st.title("North America Co-Working Priority Rankings")
+st.markdown("Add extra cities (one per line) below. They will be combined with cities from your data automatically.")
+
+user_city_inputs = st.text_area("Add more cities here (optional):", height=100)
+user_cities = [c.strip() for c in user_city_inputs.split('\n') if c.strip()]
+
+# Merge and deduplicate (case-insensitive)
+all_cities_set = set(city.lower() for city in auto_cities)
+for c in user_cities:
+    if c.lower() not in all_cities_set:
+        auto_cities.append(c)
+        all_cities_set.add(c.lower())
+
+cities = auto_cities
+
+# --- Sidebar weights ---
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
@@ -166,14 +205,7 @@ weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 weight_occupancy = st.sidebar.slider("SQM Occupancy % Weight", 0.0, 5.0, 1.0, 0.1)
 weight_cbitda = st.sidebar.slider("CBITDA Weight", 0.0, 5.0, 1.0, 0.1)
 
-st.title("North America Co-Working Priority Rankings")
-
-st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY.")
-
-city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
-cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
-
-# First pass: Collect raw data for all cities
+# --- Process data ---
 raw_results = []
 
 for city_input in cities:
@@ -201,16 +233,12 @@ for city_input in cities:
 
     transit_count = get_transit_stops_osm(lat, lon) or 0
 
-    # Match centres that contain the city_name and state in 'Centre_lower'
-    # Example centre: "5001_BC, Vancouver - Spaces Green Lamp"
-    # We'll check if "vancouver" and "bc" are substrings inside the centre string (case insensitive)
     city_name_lower = city_name.lower()
     state_prov_lower = state_prov.lower()
     matching_centres = map_excel_df[
         map_excel_df['Centre_lower'].apply(lambda x: city_name_lower in x and state_prov_lower in x)
     ]
 
-    # Sum or average the metrics over matching centres
     if not matching_centres.empty:
         office_sqft = matching_centres['Office Inv. SQFT'].sum()
         total_centre_sqft = matching_centres['Total centre SQFT'].sum()
@@ -237,7 +265,7 @@ for city_input in cities:
         "CoworkingPlaces": coworking_places
     })
 
-# Compute max values for normalization from all raw data
+# Compute max values for normalization (avoid zero division)
 max_pop = max([r["Population"] for r in raw_results] + [1])
 max_growth = max([r["Population Growth"] for r in raw_results] + [1])
 max_coworking = max([r["CoworkingSpaces"] for r in raw_results] + [1])
@@ -248,26 +276,24 @@ max_efficiency = max([r["Efficiency"] for r in raw_results] + [1])
 max_occupancy = max([r["SQM Occupancy %"] for r in raw_results] + [1])
 max_cbitda = max([r["CBITDA"] for r in raw_results] + [1])
 
-# Second pass: Normalize, score and prepare final results
 results = []
-
 for r in raw_results:
-    norm_pop = r["Population"] / max_pop if max_pop > 0 else 0
-    norm_growth = r["Population Growth"] / max_growth if max_growth > 0 else 0
-    norm_coworking = r["CoworkingSpaces"] / max_coworking if max_coworking > 0 else 0
-    norm_transit = r["TransitStops"] / max_transit if max_transit > 0 else 0
-    norm_office_sqft = r["Office Inv. SQFT"] / max_office_sqft if max_office_sqft > 0 else 0
-    norm_total_centre_sqft = r["Total centre SQFT"] / max_total_centre_sqft if max_total_centre_sqft > 0 else 0
-    norm_efficiency = r["Efficiency"] / max_efficiency if max_efficiency > 0 else 0
-    norm_occupancy = r["SQM Occupancy %"] / max_occupancy if max_occupancy > 0 else 0
-    norm_cbitda = r["CBITDA"] / max_cbitda if max_cbitda > 0 else 0
+    norm_pop = r["Population"] / max_pop
+    norm_growth = r["Population Growth"] / max_growth
+    norm_coworking = r["CoworkingSpaces"] / max_coworking
+    norm_transit = r["TransitStops"] / max_transit
+    norm_office_sqft = r["Office Inv. SQFT"] / max_office_sqft
+    norm_total_centre_sqft = r["Total centre SQFT"] / max_total_centre_sqft
+    norm_efficiency = r["Efficiency"] / max_efficiency
+    norm_occupancy = r["SQM Occupancy %"] / max_occupancy
+    norm_cbitda = r["CBITDA"] / max_cbitda
 
-    # Score calculation: higher coworking spaces means more competition so subtract its weighted value
+    # Score with weights: higher values get higher score
     score = (
         weight_population * norm_pop +
         weight_growth * norm_growth * norm_pop +
         weight_transit * norm_transit -
-        weight_coworking * norm_coworking +
+        weight_coworking * norm_coworking +  # competition reduces score
         weight_office_sqft * norm_office_sqft +
         weight_total_centre_sqft * norm_total_centre_sqft +
         weight_efficiency * norm_efficiency +
@@ -276,14 +302,10 @@ for r in raw_results:
     )
 
     r["Score"] = score
-    r["Normalized Population"] = norm_pop
-    r["Normalized Growth"] = norm_growth
-    r["Normalized Coworking"] = norm_coworking
-    r["Normalized Transit"] = norm_transit
     results.append(r)
 
-# Map creation
-map_center = [39.8283, -98.5795]
+# --- Create map ---
+map_center = [39.8283, -98.5795]  # Center USA
 m = folium.Map(location=map_center, zoom_start=4)
 markers_group = folium.FeatureGroup(name="Coworking Spaces")
 transit_group = folium.FeatureGroup(name="Transit Stops")
@@ -305,7 +327,6 @@ for r in results:
     )
     folium.Marker([r['Latitude'], r['Longitude']], popup=popup_text).add_to(m)
 
-    # Show coworking places in blue circles (up to 20)
     for place in r['CoworkingPlaces'][:20]:
         c_lat = place.get('lat') or place.get('center', {}).get('lat')
         c_lon = place.get('lon') or place.get('center', {}).get('lon')
@@ -322,30 +343,17 @@ for r in results:
         popup=f"Transit stops: {r['TransitStops']}"
     ).add_to(transit_group)
 
-markers_group.add_to(m)
-transit_group.add_to(m)
+m.add_child(markers_group)
+m.add_child(transit_group)
 folium.LayerControl().add_to(m)
 
-st.header("Map of Cities, Coworking Spaces & Transit Stops")
-st_folium(m, width=700, height=500)
+st_folium(m, width=900, height=600)
 
-df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-
-st.header("City Rankings")
+# --- Show scored cities table sorted ---
+df_results = pd.DataFrame(results)
+df_results = df_results.sort_values(by="Score", ascending=False)
 st.dataframe(df_results[[
-    "City", "Population", "Population Growth", "MedianIncome",
-    "CoworkingSpaces", "TransitStops",
-    "Office Inv. SQFT", "Total centre SQFT", "Efficiency",
+    "City", "Population", "Population Growth", "MedianIncome", "CoworkingSpaces",
+    "TransitStops", "Office Inv. SQFT", "Total centre SQFT", "Efficiency",
     "SQM Occupancy %", "CBITDA", "Score"
-]])
-
-st.markdown(
-    "---\n**Notes:**\n"
-    "- Population growth is projected over next 5 years for both US and Canadian cities.\n"
-    "- Transit stops data comes from OpenStreetMap.\n"
-    "- Adjust scoring weights in the sidebar to tailor prioritization.\n"
-    "- Map shows city locations, coworking spaces (blue), and transit stops (green)."
-)
-
-# Hide Streamlit toolbar
-st.markdown("<style>[data-testid='stToolbar'] {visibility: hidden; height: 0%; position: fixed;}</style>", unsafe_allow_html=True)
+]].reset_index(drop=True))
