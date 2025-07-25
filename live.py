@@ -3,43 +3,45 @@ import pandas as pd
 import requests
 import folium
 from streamlit_folium import st_folium
-from fuzzywuzzy import process
+import difflib
 import re
 
 # --- Load Excel Data ---
 @st.cache_data(show_spinner=False)
 def load_excel_data():
+    # Read Excel with headers on row 10 (index 9)
     df = pd.read_excel("City.xlsx", header=9)
-    df['Centre_lower'] = df['Centre'].str.lower()
+    df['Centre_lower'] = df['Centre'].astype(str).str.lower()
     return df
 
 city_excel_df = load_excel_data()
 
-# --- Extract City & Province from Centre Strings ---
+# --- Extract city + province from Centre field ---
 def extract_city_province(centre_value):
-    """
-    Converts '5001_BC, Vancouver - Spaces Green Lamp' -> 'Vancouver, BC'
-    """
+    if not isinstance(centre_value, str):
+        return ""
+    # Example format: "5001_BC, Vancouver - Spaces Green Lamp"
     match = re.match(r'^\d+_([A-Za-z]+),\s*([^-]+)', centre_value)
     if match:
-        province = match.group(1).strip()
+        province = match.group(1)
         city = match.group(2).strip()
         return f"{city}, {province}"
     return centre_value
 
-# Precompute normalized centre names
+# Add normalized column for matching
 city_excel_df['Centre_normalized'] = city_excel_df['Centre'].apply(extract_city_province).str.lower()
 
+# --- Helper to find best row match using difflib ---
 def find_centre_row(city_input, city_excel_df):
     query = city_input.strip().lower()
     centre_names = city_excel_df['Centre_normalized'].tolist()
-    best_match, score = process.extractOne(query, centre_names)
-    if score >= 80:
-        return city_excel_df[city_excel_df['Centre_normalized'] == best_match]
+    best_match = difflib.get_close_matches(query, centre_names, n=1, cutoff=0.8)
+    if best_match:
+        return city_excel_df[city_excel_df['Centre_normalized'] == best_match[0]]
     else:
         return pd.DataFrame()
 
-# --- US State FIPS Codes ---
+# --- US state FIPS mapping ---
 us_state_fips = {
     'AL': '01', 'AK': '02', 'AZ': '04', 'AR': '05', 'CA': '06',
     'CO': '08', 'CT': '09', 'DE': '10', 'FL': '12', 'GA': '13',
@@ -131,20 +133,14 @@ def calculate_population_growth(city_name, state_fips=None, country="US", years_
 @st.cache_data(show_spinner=False)
 def geocode_city(city_name):
     url = f"https://nominatim.openstreetmap.org/search"
-    params = {
-        'q': city_name,
-        'format': 'json',
-        'limit': 1
-    }
+    params = {'q': city_name, 'format': 'json', 'limit': 1}
     response = requests.get(url, params=params, headers={'User-Agent': 'coworking-location-app'})
     if response.status_code != 200:
         return None, None
     data = response.json()
     if len(data) == 0:
         return None, None
-    lat = float(data[0]['lat'])
-    lon = float(data[0]['lon'])
-    return lat, lon
+    return float(data[0]['lat']), float(data[0]['lon'])
 
 @st.cache_data(show_spinner=False)
 def get_coworking_osm(lat, lon, radius=10000):
@@ -183,10 +179,9 @@ def get_transit_stops_osm(lat, lon, radius=10000):
     if response.status_code != 200:
         return None
     data = response.json()
-    count = len(data.get('elements', []))
-    return count
+    return len(data.get('elements', []))
 
-# Sidebar Weights
+# Sidebar weights
 st.sidebar.header("Adjust Scoring Weights")
 weight_population = st.sidebar.slider("Population Weight", 0.0, 5.0, 1.0, 0.1)
 weight_growth = st.sidebar.slider("Population Growth Weight", 0.0, 5.0, 1.0, 0.1)
@@ -196,12 +191,8 @@ weight_occupancy = st.sidebar.slider("SQM Occupancy Weight", 0.0, 5.0, 1.0, 0.1)
 weight_efficiency = st.sidebar.slider("Efficiency Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
-
-st.markdown(
-    "Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nVancouver, BC."
-)
-
-city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nVancouver, BC")
+st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY.")
+city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
 cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
 results = []
 
@@ -214,16 +205,15 @@ max_occupancy = city_excel_df['SQM Occupancy'].max() if 'SQM Occupancy' in city_
 max_efficiency = city_excel_df['Efficiency'].max() if 'Efficiency' in city_excel_df.columns else 1
 
 for city_input in cities:
-    if ',' in city_input:
-        city_name, state_prov = [x.strip() for x in city_input.split(',', 1)]
-    else:
-        city_name = city_input
-        state_prov = ""
-
     lat, lon = geocode_city(city_input)
     if lat is None or lon is None:
         st.warning(f"Could not find coordinates for {city_input}")
         continue
+
+    if ',' in city_input:
+        city_name, state_prov = [x.strip() for x in city_input.split(',', 1)]
+    else:
+        city_name, state_prov = city_input, ""
 
     if state_prov.upper() in us_state_fips:
         fips = us_state_fips[state_prov.upper()]
@@ -234,19 +224,12 @@ for city_input in cities:
         growth = calculate_population_growth(city_name, country="CA", years_forward=5)
 
     coworking_count, coworking_places = get_coworking_osm(lat, lon)
-    if coworking_count is None:
-        coworking_count = 0
-        coworking_places = []
-
     transit_count = get_transit_stops_osm(lat, lon)
-    if transit_count is None:
-        transit_count = 0
 
-    # Find occupancy and efficiency automatically from Excel
     match_row = find_centre_row(city_input, city_excel_df)
     if not match_row.empty:
-        occupancy = float(match_row.iloc[0]['SQM Occupancy']) if 'SQM Occupancy' in match_row.columns else 0
-        efficiency = float(match_row.iloc[0]['Efficiency']) if 'Efficiency' in match_row.columns else 0
+        occupancy = float(match_row.iloc[0].get('SQM Occupancy', 0))
+        efficiency = float(match_row.iloc[0].get('Efficiency', 0))
     else:
         occupancy = 0
         efficiency = 0
@@ -285,35 +268,20 @@ for city_input in cities:
     popup_text = (
         f"<b>{city_input}</b><br>"
         f"Population: {pop if pop else 'N/A'}<br>"
-        f"Population Growth (projected 5yr): {growth:.2%}<br>"
+        f"Population Growth (5yr): {growth:.2%}<br>"
         f"Median Income: ${income if income else 'N/A'}<br>"
         f"Coworking Spaces: {coworking_count}<br>"
         f"Transit Stops: {transit_count}<br>"
     )
     folium.Marker([lat, lon], popup=popup_text).add_to(m)
-
     for place in coworking_places[:20]:
         c_lat = place.get('lat') or place.get('center', {}).get('lat')
         c_lon = place.get('lon') or place.get('center', {}).get('lon')
-        name = place.get('tags', {}).get('name', 'Coworking Space')
         if c_lat and c_lon:
-            folium.CircleMarker(
-                location=[c_lat, c_lon],
-                radius=5,
-                color='blue',
-                fill=True,
-                fill_opacity=0.7,
-                popup=name
-            ).add_to(markers_group)
-
-    folium.CircleMarker(
-        location=[lat, lon],
-        radius=7,
-        color='green',
-        fill=True,
-        fill_opacity=0.5,
-        popup=f"Transit stops: {transit_count}"
-    ).add_to(transit_group)
+            folium.CircleMarker(location=[c_lat, c_lon], radius=5, color='blue',
+                                fill=True, fill_opacity=0.7).add_to(markers_group)
+    folium.CircleMarker(location=[lat, lon], radius=7, color='green', fill=True,
+                        fill_opacity=0.5).add_to(transit_group)
 
 markers_group.add_to(m)
 transit_group.add_to(m)
@@ -326,18 +294,10 @@ df_results = pd.DataFrame(results)
 df_results_sorted = df_results.sort_values(by="Score", ascending=False)
 
 st.header("City Rankings")
-
 cols = st.columns(10)
 headers = [
-    "City",
-    "Population",
-    "Population Growth (5yr projected)",
-    "Median Income",
-    "Coworking Spaces",
-    "Transit Stops",
-    "SQM Occupancy",
-    "Efficiency",
-    "Score"
+    "City", "Population", "Population Growth (5yr projected)", "Median Income",
+    "Coworking Spaces", "Transit Stops", "SQM Occupancy", "Efficiency", "Score"
 ]
 for col, header in zip(cols, headers):
     col.write(f"**{header}**")
@@ -354,21 +314,13 @@ for i, row in df_results_sorted.iterrows():
     c8.write(f"{row['Efficiency']:.2f}" if pd.notnull(row['Efficiency']) else "N/A")
     c9.write(f"{row['Score']:,.2f}")
 
-st.markdown(
-    """
----
-**Notes:**
-- Population growth is projected over next 5 years for both US and Canadian cities.
-- Transit stops data comes from OpenStreetMap around city center.
-- Adjust scoring weights in the sidebar to tailor prioritization to company strategy.
-- Map shows city locations, coworking spaces (blue), and transit stops (green).
-"""
-)
+st.markdown("""---  
+**Notes:**  
+- Population growth is projected over next 5 years for both US and Canadian cities.  
+- Transit stops data comes from OpenStreetMap around city center.  
+- Adjust scoring weights in the sidebar to tailor prioritization to company strategy.  
+- Map shows city locations, coworking spaces (blue), and transit stops (green).  
+""")
 
-# --- Hide Streamlit Toolbar Buttons ---
-hide_streamlit_style = """
-    <style>
-    [data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
-    </style>
-"""
+hide_streamlit_style = """<style>[data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}</style>"""
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
