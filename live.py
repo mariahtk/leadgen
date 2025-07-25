@@ -350,7 +350,6 @@ st.markdown(
 - The score for each city is calculated as a weighted sum of normalized metrics, including population, growth, transit accessibility, office space, efficiency, occupancy, financials (CBITDA), and competition (coworking spaces).  
 - Competition (number of coworking spaces) negatively impacts the score, while other metrics positively contribute.  
 - The map displays city locations, coworking spaces (blue markers), and transit stops (green markers).  
-- Cities that cannot be geocoded (coordinates not found) are excluded from the results.
 """
 )
 
