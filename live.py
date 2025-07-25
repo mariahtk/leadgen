@@ -15,6 +15,11 @@ def load_excel_data():
 
 map_excel_df = load_excel_data()
 
+# Preprocess Map.xlsx for city/state split
+map_excel_df[['CityName', 'Region']] = map_excel_df['City'].str.lower().str.split(',', n=1, expand=True)
+map_excel_df['CityName'] = map_excel_df['CityName'].str.strip()
+map_excel_df['Region'] = map_excel_df['Region'].fillna("").str.strip()
+
 us_state_fips = {
     'AL': '01', 'AK': '02', 'AZ': '04', 'AR': '05', 'CA': '06',
     'CO': '08', 'CT': '09', 'DE': '10', 'FL': '12', 'GA': '13',
@@ -27,6 +32,10 @@ us_state_fips = {
     'SD': '46', 'TN': '47', 'TX': '48', 'UT': '49', 'VT': '50',
     'VA': '51', 'WA': '53', 'WV': '54', 'WI': '55', 'WY': '56'
 }
+
+def normalize_city_state(city_string):
+    parts = [p.strip().lower() for p in city_string.split(',')]
+    return parts if len(parts) == 2 else [parts[0], ""]
 
 @st.cache_data(show_spinner=False)
 def get_us_city_data(state_fips, city_name):
@@ -167,7 +176,6 @@ weight_occupancy = st.sidebar.slider("SQM Occupancy % Weight", 0.0, 5.0, 1.0, 0.
 weight_cbitda = st.sidebar.slider("CBITDA Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
-
 st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY.")
 
 city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
@@ -187,6 +195,13 @@ max_occupancy = map_excel_df['SQM Occupancy %'].max() or 1
 max_cbitda = map_excel_df['CBITDA'].max() or 1
 
 for city_input in cities:
+    # Flexible matching
+    input_parts = normalize_city_state(city_input)
+    match_row = map_excel_df[
+        ((map_excel_df['CityName'] == input_parts[0]) & (map_excel_df['Region'] == input_parts[1])) |
+        ((map_excel_df['CityName'] == input_parts[1]) & (map_excel_df['Region'] == input_parts[0]))
+    ]
+
     if ',' in city_input:
         city_name, state_prov = [x.strip() for x in city_input.split(',', 1)]
     else:
@@ -210,9 +225,6 @@ for city_input in cities:
         coworking_count, coworking_places = 0, []
 
     transit_count = get_transit_stops_osm(lat, lon) or 0
-
-    centre_key = city_input.lower()
-    match_row = map_excel_df[map_excel_df['City_lower'] == centre_key]
 
     if not match_row.empty:
         office_sqft = float(match_row.iloc[0].get('Office Inv. SQFT', 0))
