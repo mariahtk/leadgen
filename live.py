@@ -340,11 +340,18 @@ st.dataframe(df_results[[
 ]])
 
 st.markdown(
-    "---\n**Notes:**\n"
-    "- Population growth is projected over next 5 years for both US and Canadian cities.\n"
-    "- Transit stops data comes from OpenStreetMap.\n"
-    "- Adjust scoring weights in the sidebar to tailor prioritization.\n"
-    "- Map shows city locations, coworking spaces (blue), and transit stops (green)."
+    """
+---
+**Notes:**
+
+- Population growth is projected over the next 5 years for both US and Canadian cities.  
+- Transit stops data is retrieved from OpenStreetMap around city centers.  
+- Adjust scoring weights in the sidebar to prioritize metrics according to your strategy.  
+- The score for each city is calculated as a weighted sum of normalized metrics, including population, growth, transit accessibility, office space, efficiency, occupancy, financials (CBITDA), and competition (coworking spaces).  
+- Competition (number of coworking spaces) negatively impacts the score, while other metrics positively contribute.  
+- The map displays city locations, coworking spaces (blue markers), and transit stops (green markers).  
+- Cities that cannot be geocoded (coordinates not found) are excluded from the results.
+"""
 )
 
 # Hide Streamlit toolbar
