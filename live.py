@@ -1,3 +1,6 @@
+
+
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -170,7 +173,7 @@ st.title("North America Co-Working Priority Rankings")
 
 st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York City, NY.")
 
-city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
+city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York City, NY")
 cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
 
 # First pass: Collect raw data for all cities
