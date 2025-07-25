@@ -168,7 +168,7 @@ weight_cbitda = st.sidebar.slider("CBITDA Weight", 0.0, 5.0, 1.0, 0.1)
 
 st.title("North America Co-Working Priority Rankings")
 
-st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York, NY.")
+st.markdown("Enter one or more city names (one per line), e.g. Austin, TX\nToronto, ON\nNew York City, NY.")
 
 city_inputs = st.text_area("Enter cities:", "Austin, TX\nToronto, ON\nNew York, NY")
 cities = [c.strip() for c in city_inputs.split('\n') if c.strip()]
